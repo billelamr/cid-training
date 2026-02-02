@@ -53,15 +53,51 @@ Resources:
           Properties:
             Path: /products
             Method: GET
-            
+
         ProductDetailApi:
           Type: Api
           Properties:
             Path: /products/{product_id}
             Method: GET
 
+  ContactsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cid-training-contacts
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: contact_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: contact_id
+          KeyType: HASH
+
+  ContactFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.9
+      Handler: app.handler
+      CodeUri: src/contact/
+      MemorySize: 256
+      Timeout: 10
+      Environment:
+        Variables:
+          CONTACTS_TABLE: !Ref ContactsTable
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref ContactsTable
+      Events:
+        ContactApi:
+          Type: Api
+          Properties:
+            Path: /contact
+            Method: POST
+
+
 Outputs:
   HealthUrl:
     Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/health"
   ProductsUrl:
     Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/products"
+  ContactUrl:
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/contact"
