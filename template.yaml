@@ -3,7 +3,7 @@ Transform: AWS::Serverless-2016-10-31
 Description: CID-like training API (step 2)
 
 Resources:
-  # --- API /health (déjà OK)
+  # --- API /health
   HealthFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -52,6 +52,12 @@ Resources:
           Type: Api
           Properties:
             Path: /products
+            Method: GET
+            
+        ProductDetailApi:
+          Type: Api
+          Properties:
+            Path: /products/{product_id}
             Method: GET
 
 Outputs:
