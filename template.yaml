@@ -1,12 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: CID-like training API (step 1)
+Description: CID-like training API (step 2)
 
 Resources:
+  # --- API /health (déjà OK)
   HealthFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Runtime: python3.12
+      Runtime: python3.9
       Handler: app.handler
       CodeUri: src/health/
       MemorySize: 128
@@ -17,3 +18,44 @@ Resources:
           Properties:
             Path: /health
             Method: GET
+
+  # --- DynamoDB: products
+  ProductsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cid-training-products
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: product_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: product_id
+          KeyType: HASH
+
+  # --- Lambda: GET /products
+  ProductsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.9
+      Handler: app.handler
+      CodeUri: src/products/
+      MemorySize: 256
+      Timeout: 10
+      Environment:
+        Variables:
+          PRODUCTS_TABLE: !Ref ProductsTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ProductsTable
+      Events:
+        ProductsApi:
+          Type: Api
+          Properties:
+            Path: /products
+            Method: GET
+
+Outputs:
+  HealthUrl:
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/health"
+  ProductsUrl:
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/products"
