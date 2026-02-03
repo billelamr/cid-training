@@ -78,6 +78,20 @@ def should_skip(url: str) -> bool:
     # pages hors scope produits
     if any(x in u for x in SKIP_CONTAINS):
         return True
+    
+    if "fonts.gstatic.com" in u:
+        return True
+    
+    p = urlparse(url)
+    path_low = p.path.lower()
+
+# évite les faux liens du type ".../fonts.gstatic.com"
+    if any(x in path_low for x in ("gstatic.com", "fonts.gstatic.com")):
+        return True
+
+# si un "domaine" apparaît dans le path, c'est quasi toujours un asset/CDN
+    if re.search(r"\b[a-z0-9\-]+\.(com|net|org|io|cdn)\b", path_low):
+        return True
 
     return False
 
@@ -85,11 +99,25 @@ def extract_links(html_str: str, base_url: str):
     hrefs = re.findall(r'href=["\']([^"\']+)["\']', html_str, flags=re.IGNORECASE)
     out = []
     for h in hrefs:
-        if not h or h.startswith(("mailto:", "tel:", "javascript:")):
+        if not h:
             continue
-        link = normalize(urljoin(base_url, h))
+
+        raw = h.strip()
+
+        # ignore protocol-relative and external font/cdn links early
+        low = raw.lower()
+        if low.startswith(("mailto:", "tel:", "javascript:")):
+            continue
+        if low.startswith("//"):             # ex: //fonts.gstatic.com/...
+            continue
+        if "gstatic.com" in low or "fonts." in low:
+            continue
+
+        link = normalize(urljoin(base_url, raw))
+
         if should_skip(link):
             continue
+
         out.append(link)
     return out
 
