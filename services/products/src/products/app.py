@@ -1,17 +1,27 @@
 import json
 import os
 from typing import Any, Dict, List, Optional
+from decimal import Decimal
 
 import boto3
 
 dynamodb = boto3.resource("dynamodb")
 TABLE_NAME = os.environ["PRODUCTS_TABLE"]
 
-def _resp(status: int, payload: Any):
+def _json_default(o):
+    if isinstance(o, Decimal):
+        # si c'est un entier (ex: Decimal('4')) -> int
+        if o % 1 == 0:
+            return int(o)
+        # sinon -> float
+        return float(o)
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+def _resp(status: int, payload):
     return {
         "statusCode": status,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(payload),
+        "body": json.dumps(payload, default=_json_default),
     }
 
 def handler(event, context):
