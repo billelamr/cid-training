@@ -3,6 +3,7 @@ import os
 import urllib.request
 import urllib.error
 from typing import Any, Dict, Optional, List
+from urllib.parse import urlparse
 
 PRODUCTS_BASE = os.environ["PRODUCTS_BASE_URL"].rstrip("/")
 CONTACT_BASE = os.environ["CONTACT_BASE_URL"].rstrip("/")
@@ -20,6 +21,7 @@ def _resp(status: int, payload: Any):
 def _http_json(method: str, url: str, body: Optional[Dict[str, Any]] = None):
     data = None
     headers = {"Accept": "application/json"}
+
     if body is not None:
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -42,7 +44,7 @@ def _http_json(method: str, url: str, body: Optional[Dict[str, Any]] = None):
 
 def _as_list_payload(data: Any) -> List[Dict[str, Any]]:
     """
-    products-service renvoie maintenant:
+    products-service renvoie :
       {"items": [...], "next_token": "..."} ou {"items": [...]}
     mais au début il renvoyait parfois directement une liste.
     On rend ça robuste.
@@ -68,10 +70,9 @@ def handler(event, context):
     # Stratégie:
     # - GET products?type=category  -> catégories + sous-catégories
     # - GET products?type=product   -> produits
-    # - Assemble:
-    #   level=1 => top categories
-    #   level=2 => sub categories (parent_id = top category "engrais", "produits-chimiques", ...)
-    #   products => attach to matching parent_id (ex: engrais__idha, produits-chimiques__chlorure, ...)
+    #
+    # Problème actuel: parent_id des produits ne match pas toujours l'id des sous-catégories.
+    # Solution: on attache les produits par URL (niveau 2) en fallback.
     if method == "GET" and path.endswith("/api/catalog"):
         s1, cats_data = _http_json("GET", f"{PRODUCTS_BASE}/products?type=category")
         if s1 >= 400:
@@ -100,11 +101,17 @@ def handler(event, context):
                 "url": c.get("source_url"),
                 "category": c.get("category"),
                 "level": c.get("level"),
-                # pour le menu:
                 "children": [],   # sous-catégories
-                "products": [],   # produits directement rattachés (rare)
+                "products": [],   # produits attachés à ce node
             }
             cat_by_id[cid] = node
+
+        # Index des catégories par URL (pour rattacher les produits même si parent_id ne match pas)
+        cat_by_url: Dict[str, Dict[str, Any]] = {}
+        for node in cat_by_id.values():
+            u = (node.get("url") or "").rstrip("/")
+            if u:
+                cat_by_url[u] = node
 
         # 2) Trouver les top categories (level=1 ou pas de parent_id)
         #    + rattacher les sous-catégories (level=2)
@@ -117,34 +124,34 @@ def handler(event, context):
             parent = c.get("parent_id")
 
             if not parent:
-                # pas de parent => top
                 top.append(node)
             else:
-                # parent_id de niveau 2 ressemble à "engrais" ou "produits-chimiques"
-                # Mais nos top categories ont des IDs type "engrais__xxxx".
-                # On rattache donc par match sur "category" + level, ou par recherche:
-                #
-                # - si parent correspond à un "category slug" (engrais/produits-chimiques)
-                #   on cherche le top node dont node["category"] == parent et level==1
+                # parent_id de niveau 2 ressemble souvent à "engrais" ou "produits-chimiques"
                 parent_slug = parent
                 parent_top = None
+
                 for t in cat_by_id.values():
                     if t.get("level") == 1 and t.get("category") == parent_slug:
                         parent_top = t
                         break
+
                 if parent_top:
                     parent_top["children"].append(node)
                 else:
-                    # fallback: si le parent_id est un vrai ID (au cas où)
+                    # fallback: si le parent_id est un vrai ID
                     if parent in cat_by_id:
                         cat_by_id[parent]["children"].append(node)
 
-        # 3) Rattacher les produits à leur parent_id (souvent une sous-catégorie id "engrais__idha", etc.)
+        # 3) Rattacher les produits
+        # Priorité:
+        # 1) parent_id exact (si ça match un node id)
+        # 2) sinon: URL niveau 2 (https://cidgroupe.com/<lvl1>/<lvl2>)
+        # 3) sinon: URL niveau 1 (https://cidgroupe.com/<lvl1>)
         for p in products:
             pid = p.get("product_id")
             if not pid:
                 continue
-            parent_id = p.get("parent_id")
+
             prod = {
                 "id": pid,
                 "name": p.get("name"),
@@ -153,21 +160,38 @@ def handler(event, context):
                 "level": p.get("level"),
                 "type": p.get("type"),
             }
+
+            # 1) match direct parent_id -> category node id
+            parent_id = p.get("parent_id")
             if parent_id and parent_id in cat_by_id:
                 cat_by_id[parent_id]["products"].append(prod)
-            else:
-                # fallback: si pas de parent match, on peut le ranger sous la top category via "category"
-                placed = False
-                for t in top:
-                    if t.get("category") == p.get("category"):
-                        t["products"].append(prod)
-                        placed = True
-                        break
-                if not placed:
-                    # sinon on le met dans un "orphans"
-                    pass
+                continue
 
-        # Option: trier par nom
+            # 2) fallback: calculer l'URL "niveau 2"
+            src = (p.get("source_url") or "").rstrip("/")
+            try:
+                parts = [x for x in urlparse(src).path.strip("/").split("/") if x]
+            except Exception:
+                parts = []
+
+            if len(parts) >= 2:
+                lvl2_url = f"https://cidgroupe.com/{parts[0]}/{parts[1]}"
+                node = cat_by_url.get(lvl2_url)
+                if node:
+                    node["products"].append(prod)
+                    continue
+
+            # 3) fallback: URL niveau 1
+            if len(parts) >= 1:
+                lvl1_url = f"https://cidgroupe.com/{parts[0]}"
+                node = cat_by_url.get(lvl1_url)
+                if node:
+                    node["products"].append(prod)
+                    continue
+
+            # sinon: orphelin -> on ignore (ou tu peux les collecter)
+
+        # Tri par nom (menu stable)
         def by_name(x):
             return (x.get("name") or "").lower()
 
