@@ -8,6 +8,8 @@ from urllib.request import Request, urlopen
 import html
 import re
 
+
+
 DOMAIN = "cidgroupe.com"
 TABLE = "cid-ms-products"
 
@@ -123,14 +125,22 @@ def extract_links(html_str: str, base_url: str):
 
 def get_title(url: str) -> str:
     try:
-        html = fetch(url)
+        page_html = fetch(url)
     except Exception:
         return url
-    m = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+
+    m = re.search(r"<title>(.*?)</title>", page_html, re.IGNORECASE | re.DOTALL)
     if not m:
         return url
+
     title = re.sub(r"\s+", " ", m.group(1)).strip()
+
+    # ✅ Convertit &amp; &quot; &#039; etc. en vrais caractères
+    title = html.unescape(title)
+
+    # Retire le suffixe " | CID Groupe"
     title = re.sub(r"\s*\|\s*CID Groupe.*$", "", title).strip()
+
     return title or url
 
 def path_parts(url: str):
@@ -287,6 +297,8 @@ def main():
 
     batch_write(items)
     print("Done.")
+
+
 
 if __name__ == "__main__":
     main()
