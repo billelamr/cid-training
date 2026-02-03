@@ -5,6 +5,8 @@ import hashlib
 from collections import deque
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
+import html
+import re
 
 DOMAIN = "cidgroupe.com"
 TABLE = "cid-ms-products"
@@ -31,28 +33,64 @@ def fetch(url: str) -> str:
     return urlopen(req, timeout=20).read().decode("utf-8", errors="ignore")
 
 def normalize(url: str) -> str:
+    # decode &lt; &gt; etc.
+    url = html.unescape(url)
+
     url = url.replace("https://www.cidgroupe.com", "https://cidgroupe.com")
     url = url.replace("http://cidgroupe.com", "https://cidgroupe.com")
     url = url.replace("http://www.cidgroupe.com", "https://cidgroupe.com")
-    return url.split("#")[0].rstrip("/")
+
+    # remove fragments
+    url = url.split("#")[0].strip()
+
+    # remove trailing slash (sauf racine)
+    if url.endswith("/") and len(url) > len("https://cidgroupe.com/"):
+        url = url.rstrip("/")
+
+    return url
 
 def is_internal(url: str) -> bool:
     try:
-        return urlparse(url).netloc.lower().endswith(DOMAIN)
+        host = urlparse(url).netloc.lower()
+        return host in ("cidgroupe.com", "www.cidgroupe.com")
     except Exception:
         return False
 
+ASSET_EXT = re.compile(r"\.(css|js|png|jpg|jpeg|webp|svg|gif|ico|woff2?|ttf|eot|map)(\?.*)?$", re.IGNORECASE)
+
 def should_skip(url: str) -> bool:
     u = url.lower()
-    return any(x in u for x in SKIP_CONTAINS)
 
-def extract_links(html: str, base_url: str):
-    hrefs = re.findall(r'href=["\']([^"\']+)["\']', html, flags=re.IGNORECASE)
+    # mauvaises “URLs” HTML / placeholders
+    if "<" in u or ">" in u or "nolink" in u:
+        return True
+
+    # on ne garde que le domaine exact
+    if not is_internal(url):
+        return True
+
+    p = urlparse(url)
+
+    # fichiers statiques
+    if ASSET_EXT.search(p.path):
+        return True
+
+    # pages hors scope produits
+    if any(x in u for x in SKIP_CONTAINS):
+        return True
+
+    return False
+
+def extract_links(html_str: str, base_url: str):
+    hrefs = re.findall(r'href=["\']([^"\']+)["\']', html_str, flags=re.IGNORECASE)
     out = []
     for h in hrefs:
         if not h or h.startswith(("mailto:", "tel:", "javascript:")):
             continue
-        out.append(normalize(urljoin(base_url, h)))
+        link = normalize(urljoin(base_url, h))
+        if should_skip(link):
+            continue
+        out.append(link)
     return out
 
 def get_title(url: str) -> str:
