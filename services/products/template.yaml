@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: cid products-service
+
+Resources:
+  ProductsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cid-ms-products
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: product_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: product_id
+          KeyType: HASH
+
+  ProductsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.9
+      Handler: app.handler
+      CodeUri: src/products/
+      MemorySize: 256
+      Timeout: 10
+      Environment:
+        Variables:
+          PRODUCTS_TABLE: !Ref ProductsTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ProductsTable
+      Events:
+        ProductsList:
+          Type: Api
+          Properties:
+            Path: /products
+            Method: GET
+        ProductDetail:
+          Type: Api
+          Properties:
+            Path: /products/{product_id}
+            Method: GET
+
+Outputs:
+  ProductsApiBaseUrl:
+    Description: Base URL for products-service
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+    Export:
+      Name: cid-products-ApiBaseUrl
+  ProductsTableName:
+    Value: !Ref ProductsTable
