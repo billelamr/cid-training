@@ -16,21 +16,11 @@ Resources:
           PRODUCTS_BASE_URL: !ImportValue cid-products-ApiBaseUrl
           CONTACT_BASE_URL: !ImportValue cid-contact-ApiBaseUrl
       Events:
-        ApiProductsList:
+        ApiProxy:
           Type: Api
           Properties:
-            Path: /api/products
-            Method: GET
-        ApiProductsDetail:
-          Type: Api
-          Properties:
-            Path: /api/products/{product_id}
-            Method: GET
-        ApiContact:
-          Type: Api
-          Properties:
-            Path: /api/contact
-            Method: POST
+            Path: /{proxy+}
+            Method: ANY
 
 Outputs:
   BffApiBaseUrl:
